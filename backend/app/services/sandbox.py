@@ -297,13 +297,22 @@ def _local_sync(language: str, source: str, stdin: str) -> dict:
         }
 
 
+def _judge0_error(exc: Exception) -> str:
+    """Actionable, secret-free description of a Judge0 failure."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        hint = {401: "invalid API key", 403: "not subscribed or key not allowed", 429: "daily quota exceeded"}.get(code, "")
+        return f"HTTP {code}{': ' + hint if hint else ''}"
+    return type(exc).__name__
+
+
 async def execute(language: str, source: str, stdin: str) -> dict:
     if settings.judge0_url:
         try:
             return await _judge0(language, source, stdin)
         except Exception as exc:
             if not settings.allow_local_runner:
-                return {"status": "unavailable", "stdout": "", "stderr": f"Judge0 unreachable ({type(exc).__name__})", "engine": "judge0"}
+                return {"status": "unavailable", "stdout": "", "stderr": f"Judge0 unreachable ({_judge0_error(exc)})", "engine": "judge0"}
     if settings.allow_local_runner:
         return await asyncio.to_thread(_local_sync, language, source, stdin)
     return {"status": "unavailable", "stdout": "", "stderr": "No execution engine configured", "engine": "unavailable"}

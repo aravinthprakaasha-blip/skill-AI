@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -43,6 +44,13 @@ class Settings(BaseSettings):
 
     github_enrichment: bool = False
     seed_demo_data: bool = True
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip_whitespace(cls, v):
+        # Values pasted into hosting dashboards often carry a trailing space or newline, which
+        # makes HTTP headers (API keys) and URLs invalid. Strip them everywhere.
+        return v.strip() if isinstance(v, str) else v
 
     @property
     def is_postgres(self) -> bool:

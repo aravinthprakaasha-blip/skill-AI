@@ -225,3 +225,12 @@ def test_cors_tolerates_trailing_slash_and_regex():
     assert ok("https://skillai-pccr61og4-team-projects.vercel.app")
     assert not ok("https://evil.vercel.app")
     assert not ok("https://skillai-x-team-projects.vercel.app.evil.com")
+
+
+def test_settings_strip_pasted_whitespace():
+    from app.config import Settings
+
+    s = Settings(judge0_api_key="abc123\n", judge0_url=" https://judge0-ce.p.rapidapi.com \n", cors_origins="https://a.app ")
+    assert s.judge0_api_key == "abc123"
+    assert s.judge0_url == "https://judge0-ce.p.rapidapi.com"
+    assert s.cors_list == ["https://a.app"]
