@@ -21,12 +21,56 @@ def llm_available() -> bool:
     return bool(settings.gemini_api_key)
 
 
+_active_model: str | None = None  # resolved at runtime if the configured model is retired
+
+
+def current_model() -> str:
+    return _active_model or settings.gemini_model
+
+
 def engine_label() -> str:
-    return f"gemini:{settings.gemini_model}" if llm_available() else "deterministic-fallback"
+    return f"gemini:{current_model()}" if llm_available() else "deterministic-fallback"
+
+
+_SKIP = ("lite", "image", "tts", "audio", "live", "embedding", "thinking", "exp", "preview", "learnlm", "aqa")
+
+
+def _version_key(name: str) -> tuple:
+    nums = re.findall(r"\d+(?:\.\d+)?", name)
+    return tuple(float(n) for n in nums) or (0.0,)
+
+
+def pick_model(models: list[dict]) -> str | None:
+    """Choose the newest stable Flash (else Pro) model that supports generateContent."""
+    usable = [
+        m["name"].split("/")[-1]
+        for m in models
+        if "generateContent" in m.get("supportedGenerationMethods", [])
+    ]
+    for family in ("flash", "pro"):
+        cands = [n for n in usable if family in n and n.startswith("gemini") and not any(x in n for x in _SKIP)]
+        if cands:
+            return max(cands, key=_version_key)
+    return None
+
+
+async def _discover_model(client: httpx.AsyncClient) -> str | None:
+    try:
+        r = await client.get(BASE, headers={"x-goog-api-key": settings.gemini_api_key}, params={"pageSize": 200})
+        r.raise_for_status()
+        return pick_model(r.json().get("models", []))
+    except Exception as exc:
+        log.warning("Gemini model discovery failed: %s", type(exc).__name__)
+        return None
 
 
 async def generate_json(prompt: str, schema: dict, system: str = "", temperature: float = 0.2) -> dict | None:
-    """Ask Gemini for a JSON object matching `schema`. Returns None on any failure."""
+    """Ask Gemini for a JSON object matching `schema`. Returns None on any failure.
+
+    If the configured model returns 404 (retired or renamed), the newest available Flash model
+    is discovered once via the ListModels API and used from then on.
+    """
+    global _active_model
     if not llm_available():
         return None
     body: dict = {
@@ -39,13 +83,16 @@ async def generate_json(prompt: str, schema: dict, system: str = "", temperature
     }
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
+    headers = {"x-goog-api-key": settings.gemini_api_key}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{BASE}/{settings.gemini_model}:generateContent",
-                headers={"x-goog-api-key": settings.gemini_api_key},
-                json=body,
-            )
+            r = await client.post(f"{BASE}/{current_model()}:generateContent", headers=headers, json=body)
+            if r.status_code == 404:
+                found = await _discover_model(client)
+                if found and found != current_model():
+                    log.warning("Gemini model %s unavailable; switching to %s", current_model(), found)
+                    _active_model = found
+                    r = await client.post(f"{BASE}/{found}:generateContent", headers=headers, json=body)
             r.raise_for_status()
             text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
         import json
@@ -53,7 +100,8 @@ async def generate_json(prompt: str, schema: dict, system: str = "", temperature
         data = json.loads(text)
         return data if isinstance(data, dict) else None
     except Exception as exc:  # network, quota, malformed output -> fallback
-        log.warning("Gemini call failed, using fallback: %s", type(exc).__name__)
+        detail = f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
+        log.warning("Gemini call failed, using fallback: %s", detail)
         return None
 
 

@@ -234,3 +234,20 @@ def test_settings_strip_pasted_whitespace():
     assert s.judge0_api_key == "abc123"
     assert s.judge0_url == "https://judge0-ce.p.rapidapi.com"
     assert s.cors_list == ["https://a.app"]
+
+
+def test_gemini_model_discovery_picks_newest_stable_flash():
+    from app.services.llm import pick_model
+
+    gm = ["generateContent"]
+    models = [
+        {"name": "models/gemini-2.0-flash", "supportedGenerationMethods": gm},
+        {"name": "models/gemini-3.1-flash", "supportedGenerationMethods": gm},
+        {"name": "models/gemini-3.1-flash-lite", "supportedGenerationMethods": gm},
+        {"name": "models/gemini-3.5-flash-preview-09", "supportedGenerationMethods": gm},
+        {"name": "models/gemini-3.1-pro", "supportedGenerationMethods": gm},
+        {"name": "models/gemini-embedding-001", "supportedGenerationMethods": ["embedContent"]},
+    ]
+    assert pick_model(models) == "gemini-3.1-flash"
+    assert pick_model([{"name": "models/gemini-3.0-pro", "supportedGenerationMethods": gm}]) == "gemini-3.0-pro"
+    assert pick_model([]) is None
