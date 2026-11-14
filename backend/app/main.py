@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("JWT_SECRET must be set in production")
     await seed_all(settings.seed_demo_data)
     tasks = [asyncio.create_task(_stall_loop())]
+    from .services.llm import resolve_model
+
+    tasks.append(asyncio.create_task(resolve_model()))  # find a working Gemini model in the background
     if settings.redis_url:
         from .events import redis_listener
 

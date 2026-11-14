@@ -17,8 +17,11 @@ settings = get_settings()
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
+_llm_ok: bool | None = None  # None = not probed yet; False = no working model found at startup
+
+
 def llm_available() -> bool:
-    return bool(settings.gemini_api_key)
+    return bool(settings.gemini_api_key) and _llm_ok is not False
 
 
 _active_model: str | None = None  # resolved at runtime if the configured model is retired
@@ -62,6 +65,64 @@ async def _discover_model(client: httpx.AsyncClient) -> str | None:
     except Exception as exc:
         log.warning("Gemini model discovery failed: %s", type(exc).__name__)
         return None
+
+
+def candidate_models(models: list[dict]) -> list[str]:
+    """All usable Gemini text models, best first: stable Flash (newest first), then Flash-Lite, then Pro."""
+    usable = [m["name"].split("/")[-1] for m in models if "generateContent" in m.get("supportedGenerationMethods", [])]
+    usable = [n for n in usable if n.startswith("gemini") and not any(x in n for x in ("image", "tts", "audio", "live", "embedding"))]
+
+    def rank(n: str) -> tuple:
+        tier = 0 if "flash" in n and "lite" not in n else 1 if "lite" in n else 2 if "pro" in n else 3
+        unstable = any(x in n for x in ("exp", "preview", "thinking", "learnlm"))
+        return (tier, unstable, tuple(-v for v in _version_key(n)))
+
+    return sorted(set(usable), key=rank)
+
+
+async def _probe(client: httpx.AsyncClient, model: str) -> bool:
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": 'Reply with {"ok": true}'}]}],
+        "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 64},
+    }
+    try:
+        r = await client.post(f"{BASE}/{model}:generateContent", headers={"x-goog-api-key": settings.gemini_api_key},
+                              json=body, timeout=25)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def resolve_model() -> str | None:
+    """Startup check: find a model that actually answers with this key, so requests never hang."""
+    global _active_model, _llm_ok
+    if not settings.gemini_api_key:
+        return None
+    async with httpx.AsyncClient(timeout=30) as client:
+        tried = []
+        if await _probe(client, settings.gemini_model):
+            _active_model, _llm_ok = settings.gemini_model, True
+            log.info("Gemini model %s is working", settings.gemini_model)
+            return _active_model
+        tried.append(settings.gemini_model)
+        try:
+            r = await client.get(BASE, headers={"x-goog-api-key": settings.gemini_api_key}, params={"pageSize": 200})
+            r.raise_for_status()
+            candidates = candidate_models(r.json().get("models", []))
+        except Exception as exc:
+            log.warning("Gemini model listing failed: %s", type(exc).__name__)
+            candidates = []
+        for model in candidates[:8]:
+            if model in tried:
+                continue
+            tried.append(model)
+            if await _probe(client, model):
+                _active_model, _llm_ok = model, True
+                log.warning("Gemini model %s did not answer; using %s", settings.gemini_model, model)
+                return model
+    _llm_ok = False
+    log.warning("No Gemini model answered (tried %s); AI features use deterministic fallbacks", ", ".join(tried))
+    return None
 
 
 async def generate_json(prompt: str, schema: dict, system: str = "", temperature: float = 0.2) -> dict | None:

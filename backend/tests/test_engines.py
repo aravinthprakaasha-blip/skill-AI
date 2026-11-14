@@ -251,3 +251,14 @@ def test_gemini_model_discovery_picks_newest_stable_flash():
     assert pick_model(models) == "gemini-3.1-flash"
     assert pick_model([{"name": "models/gemini-3.0-pro", "supportedGenerationMethods": gm}]) == "gemini-3.0-pro"
     assert pick_model([]) is None
+
+
+def test_gemini_candidate_order():
+    from app.services.llm import candidate_models
+
+    gm = ["generateContent"]
+    names = ["gemini-2.0-flash", "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.9-flash-preview",
+             "gemini-3.5-pro", "gemini-embedding-001", "gemini-3.8-flash-image"]
+    order = candidate_models([{"name": f"models/{n}", "supportedGenerationMethods": gm} for n in names])
+    assert order == ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-3.9-flash-preview",
+                     "gemini-3.8-flash-lite", "gemini-3.5-pro"]
