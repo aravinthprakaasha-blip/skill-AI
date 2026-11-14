@@ -4,7 +4,7 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
-from ..db import SessionLocal, get_db
+from ..db import SessionLocal, engine, get_db
 from ..events import manager
 from ..jobs import dispatch
 from ..models import (
@@ -83,8 +83,8 @@ def admin_stats(_: User = Depends(admin), db: Session = Depends(get_db)):
         "submissions": dict(subs),
         "ledger_entries": db.query(LedgerEntry).count(),
         "integrations": {"llm": llm.engine_label(), "embeddings": llm.embedding_model_name(),
-                         "execution": sandbox.engine_name(), "database": db.bind.dialect.name,
-                         "vector_search": "pgvector" if db.bind.dialect.name == "postgresql" else "in-process cosine",
+                         "execution": sandbox.engine_name(), "database": engine.dialect.name,
+                         "vector_search": "pgvector" if engine.dialect.name == "postgresql" else "in-process cosine",
                          "queue": "rq" if sandbox.settings.redis_url else "in-process"},
     }
 
