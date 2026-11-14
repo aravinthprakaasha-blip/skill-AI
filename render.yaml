@@ -30,3 +30,5 @@ services:
         value: "false"
       - key: SEED_DEMO_DATA
         value: "false"
+      - key: CORS_ORIGIN_REGEX
+        sync: false                  # optional: ^https://skillai(-[a-z0-9-]+)?-<team>-projects\.vercel\.app$

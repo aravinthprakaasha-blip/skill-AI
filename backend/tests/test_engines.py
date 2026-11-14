@@ -200,3 +200,28 @@ def test_supabase_asymmetric_jwt_is_verified(monkeypatch):
     assert security.decode_supabase(token)["sub"] == "sb-user-1"
     other = ec.generate_private_key(ec.SECP256R1())
     assert security.decode_supabase(jwt.encode(claims, other, algorithm="ES256")) is None  # wrong key rejected
+
+
+def test_cors_tolerates_trailing_slash_and_regex():
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+
+    s = Settings(cors_origins="https://site.vercel.app/, http://localhost:3000",
+                 cors_origin_regex=r"^https://skillai(-[a-z0-9-]+)?-team-projects\.vercel\.app$")
+    assert s.cors_list == ["https://site.vercel.app", "http://localhost:3000"]
+    app = FastAPI()
+    app.add_middleware(CORSMiddleware, allow_origins=s.cors_list, allow_origin_regex=s.cors_origin_regex,
+                       allow_methods=["*"], allow_headers=["*"])
+    c = TestClient(app)
+
+    def ok(origin):
+        r = c.options("/x", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        return r.status_code == 200
+
+    assert ok("https://site.vercel.app")
+    assert ok("https://skillai-pccr61og4-team-projects.vercel.app")
+    assert not ok("https://evil.vercel.app")
+    assert not ok("https://skillai-x-team-projects.vercel.app.evil.com")

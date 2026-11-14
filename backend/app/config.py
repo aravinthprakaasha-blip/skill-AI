@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # PostgreSQL 16 + pgvector in production; SQLite is the zero-dependency dev fallback.
     database_url: str = f"sqlite:///{(BACKEND_DIR / 'skillforge.db').as_posix()}"
     cors_origins: str = "http://localhost:3000"
+    # Optional regex for extra allowed origins, e.g. your own Vercel preview URLs:
+    #   ^https://skillai(-[a-z0-9-]+)?-yourteam-projects\.vercel\.app$
+    cors_origin_regex: str = ""
 
     # Auth. If SUPABASE_JWT_SECRET is set, Supabase-issued tokens are accepted as well.
     jwt_secret: str = "dev-only-change-me"
@@ -47,7 +50,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        # Browsers send origins without a trailing slash, so tolerate "https://site.app/" in config.
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache
