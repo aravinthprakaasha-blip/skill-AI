@@ -68,4 +68,19 @@ for r in (auth.router, learner.router, missions.router, public.router):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "llm": llm.engine_label(), "execution": sandbox.engine_name()}
+    """Liveness + a trivial DB query (also keeps free-tier databases from pausing when pinged)."""
+    from sqlalchemy import text
+
+    from .db import engine
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    return JSONResponse(
+        status_code=200 if db_ok else 503,
+        content={"status": "ok" if db_ok else "degraded", "database": "ok" if db_ok else "unreachable",
+                 "llm": llm.engine_label(), "execution": sandbox.engine_name()},
+    )

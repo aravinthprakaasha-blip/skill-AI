@@ -336,8 +336,7 @@ async def skill_validator(state: AgentState, task: str) -> dict:
                    "stderr": "Execution skipped: static audit blocked this submission.", "engine": sandbox.engine_name()}
         visible, hidden = {**skipped, "total": len(visible_tests)}, {**skipped, "total": len(hidden_tests)}
     else:
-        visible = await sandbox.run_tests(lang, code, visible_tests, cfg, reveal=True)
-        hidden = await sandbox.run_tests(lang, code, hidden_tests, cfg, reveal=False)
+        visible, hidden = await sandbox.run_suites(lang, code, cfg, [(visible_tests, True), (hidden_tests, False)])
     tests_passed = bool(visible["passed"] and hidden["passed"])
 
     # Engine 3: AI review (advisory)

@@ -1,0 +1,32 @@
+# Render Blueprint: SkillForge AI backend on the free plan.
+# Render dashboard -> New -> Blueprint -> pick this repo. Values marked sync:false are asked for once.
+services:
+  - type: web
+    name: skillforge-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true          # Render creates a long random secret for you
+      - key: DATABASE_URL
+        sync: false                  # Supabase "Session pooler" connection string
+      - key: SUPABASE_URL
+        sync: false                  # https://<project>.supabase.co
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: JUDGE0_URL
+        value: https://judge0-ce.p.rapidapi.com
+      - key: JUDGE0_API_KEY
+        sync: false                  # your RapidAPI key
+      - key: CORS_ORIGINS
+        sync: false                  # your Vercel URL, e.g. https://skill-ai.vercel.app
+      - key: ALLOW_LOCAL_RUNNER
+        value: "false"
+      - key: SEED_DEMO_DATA
+        value: "false"

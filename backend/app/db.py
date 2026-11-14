@@ -9,8 +9,9 @@ from .config import get_settings
 settings = get_settings()
 
 _url = settings.database_url
-if _url.startswith("postgresql://"):
-    _url = _url.replace("postgresql://", "postgresql+psycopg://", 1)
+for _prefix in ("postgresql://", "postgres://"):
+    if _url.startswith(_prefix):
+        _url = _url.replace(_prefix, "postgresql+psycopg://", 1)
 
 _kwargs: dict = {"pool_pre_ping": True}
 if _url.startswith("sqlite"):
@@ -92,3 +93,16 @@ def init_db() -> None:
             conn.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_resources_embedding_hnsw ON resources USING hnsw (embedding vector_cosine_ops)"
             )
+            lock_down_tables(conn)
+
+
+def lock_down_tables(conn) -> None:
+    """Enable Row Level Security (with no policies) on every SkillForge table.
+
+    Hosted Postgres such as Supabase exposes the `public` schema through an auto-generated REST
+    API reachable with the public anon key. RLS without policies denies that API all access. The
+    backend connects as the table owner, which bypasses RLS, so the application is unaffected.
+    """
+    for table in Base.metadata.sorted_tables:
+        conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY')
+    conn.exec_driver_sql("ALTER TABLE IF EXISTS alembic_version ENABLE ROW LEVEL SECURITY")

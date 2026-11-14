@@ -206,10 +206,13 @@ def _unb64(s: str | None) -> str:
 
 async def _judge0(language: str, source: str, stdin: str) -> dict:
     headers = {"Content-Type": "application/json"}
+    rapidapi = "rapidapi.com" in settings.judge0_url
     if settings.judge0_api_key:
-        headers["X-Auth-Token"] = settings.judge0_api_key
-        if "rapidapi" in settings.judge0_url:
+        if rapidapi:
             headers["X-RapidAPI-Key"] = settings.judge0_api_key
+            headers["X-RapidAPI-Host"] = httpx.URL(settings.judge0_url).host
+        else:
+            headers["X-Auth-Token"] = settings.judge0_api_key
     body = {
         "source_code": _b64(source),
         "language_id": LANGUAGES[language]["judge0_id"],
@@ -220,7 +223,14 @@ async def _judge0(language: str, source: str, stdin: str) -> dict:
         "enable_network": False,
     }
     base = settings.judge0_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=60, headers=headers) as client:
+        if rapidapi:
+            # Hosted quota counts every request: one blocking call instead of submit + polling.
+            r = await client.post(f"{base}/submissions?base64_encoded=true&wait=true", json=body)
+            r.raise_for_status()
+            data = r.json()
+            sid = data["status"]["id"]
+            return _judge0_result(data, sid)
         r = await client.post(f"{base}/submissions?base64_encoded=true&wait=false", json=body)
         r.raise_for_status()
         token = r.json()["token"]
@@ -235,6 +245,10 @@ async def _judge0(language: str, source: str, stdin: str) -> dict:
             if time.monotonic() > deadline:
                 return {"status": "timeout", "stdout": "", "stderr": "Sandbox queue timeout", "engine": "judge0"}
             await asyncio.sleep(0.4)
+    return _judge0_result(data, sid)
+
+
+def _judge0_result(data: dict, sid: int) -> dict:
     status = {3: "ok", 5: "timeout", 6: "compile_error"}.get(sid, "runtime_error" if sid >= 7 else "ok")
     return {
         "status": status,
@@ -318,23 +332,7 @@ def _equal(actual, expected, unordered: bool = False) -> bool:
     return actual == expected
 
 
-async def run_tests(language: str, code: str, tests: list[dict], lang_cfg: dict, reveal: bool) -> dict:
-    """Run `tests` against `code`. With reveal=False (hidden tests) only pass/fail is reported."""
-    mark = f"__SF_{secrets.token_hex(12)}__"
-    try:
-        source, stdin = build_program(language, code, [t["call"] for t in tests], lang_cfg, mark)
-    except HarnessError as exc:
-        return {"status": "error", "passed": False, "results": [], "stdout": "", "stderr": str(exc), "engine": engine_name()}
-    res = await execute(language, source, stdin)
-    stdout = res.get("stdout", "")
-    payload = None
-    idx = stdout.rfind(mark)
-    if idx >= 0:
-        try:
-            payload = json.loads(stdout[idx + len(mark) :].strip().splitlines()[0])
-        except (ValueError, IndexError):
-            payload = None
-        stdout = stdout[:idx].rstrip("\n")
+def _report(tests: list[dict], payload, res: dict, reveal: bool, show_output: bool, stdout: str) -> dict:
     results = []
     for i, t in enumerate(tests):
         name = t.get("name", f"Test {i + 1}") if reveal else f"Hidden test {i + 1}"
@@ -352,16 +350,54 @@ async def run_tests(language: str, code: str, tests: list[dict], lang_cfg: dict,
             item["input"] = t["call"]
         results.append(item)
     passed = bool(results) and all(r["passed"] for r in results)
+    always = res["status"] in ("compile_error", "timeout", "unavailable")
     return {
         "status": res["status"],
         "passed": passed,
         "passed_count": sum(r["passed"] for r in results),
         "total": len(results),
         "results": results,
-        "stdout": stdout if reveal else "",
-        "stderr": res.get("stderr", "") if reveal or res["status"] in ("compile_error", "timeout", "unavailable") else "",
+        "stdout": stdout if show_output else "",
+        "stderr": res.get("stderr", "") if show_output or always else "",
         "time_ms": res.get("time_ms"),
         "memory_kb": res.get("memory_kb"),
         "engine": res.get("engine"),
         "limits": {"time_s": settings.exec_time_limit_s, "memory_kb": settings.exec_memory_limit_kb},
     }
+
+
+async def run_suites(language: str, code: str, lang_cfg: dict, suites: list[tuple[list[dict], bool]]) -> list[dict]:
+    """Run several test suites in ONE sandbox execution (saves hosted Judge0 quota).
+
+    Each suite is (tests, reveal). Program output is only shown when every suite is revealed:
+    a combined run's stdout/stderr could otherwise echo hidden test inputs.
+    """
+    mark = f"__SF_{secrets.token_hex(12)}__"
+    all_tests = [t for tests, _ in suites for t in tests]
+    try:
+        source, stdin = build_program(language, code, [t["call"] for t in all_tests], lang_cfg, mark)
+    except HarnessError as exc:
+        err = {"status": "error", "passed": False, "passed_count": 0, "results": [], "stdout": "", "stderr": str(exc), "engine": engine_name()}
+        return [{**err, "total": len(tests)} for tests, _ in suites]
+    res = await execute(language, source, stdin)
+    stdout = res.get("stdout", "")
+    payload = None
+    idx = stdout.rfind(mark)
+    if idx >= 0:
+        try:
+            payload = json.loads(stdout[idx + len(mark) :].strip().splitlines()[0])
+        except (ValueError, IndexError):
+            payload = None
+        stdout = stdout[:idx].rstrip("\n")
+    show_output = all(reveal for _, reveal in suites)
+    reports, offset = [], 0
+    for tests, reveal in suites:
+        part = payload[offset : offset + len(tests)] if isinstance(payload, list) else None
+        reports.append(_report(tests, part, res, reveal, show_output, stdout))
+        offset += len(tests)
+    return reports
+
+
+async def run_tests(language: str, code: str, tests: list[dict], lang_cfg: dict, reveal: bool) -> dict:
+    """Run one suite. With reveal=False (hidden tests) only pass/fail is reported."""
+    return (await run_suites(language, code, lang_cfg, [(tests, reveal)]))[0]

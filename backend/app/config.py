@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-change-me"
     jwt_expire_minutes: int = 60 * 24
     supabase_jwt_secret: str = ""
+    supabase_url: str = ""  # e.g. https://abcd.supabase.co - enables the new asymmetric JWT keys (JWKS)
 
     # Gemini (optional). Without a key every AI step uses a labelled deterministic fallback.
     gemini_api_key: str = ""
@@ -42,7 +43,7 @@ class Settings(BaseSettings):
 
     @property
     def is_postgres(self) -> bool:
-        return self.database_url.startswith("postgresql")
+        return self.database_url.startswith(("postgresql", "postgres://"))
 
     @property
     def cors_list(self) -> list[str]:

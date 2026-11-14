@@ -35,13 +35,34 @@ def create_token(user: User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+_jwks_client: "jwt.PyJWKClient | None" = None
+
+
+def _jwks() -> "jwt.PyJWKClient | None":
+    """Supabase's public signing keys (new asymmetric JWT keys), cached by PyJWKClient."""
+    global _jwks_client
+    if _jwks_client is None and settings.supabase_url:
+        _jwks_client = jwt.PyJWKClient(
+            f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json", cache_keys=True, lifespan=3600
+        )
+    return _jwks_client
+
+
 def decode_supabase(token: str) -> dict | None:
-    if not settings.supabase_jwt_secret:
-        return None
+    """Verify a Supabase access token: asymmetric keys (ES256/RS256 via JWKS) or the legacy HS256 secret."""
     try:
-        return jwt.decode(token, settings.supabase_jwt_secret, algorithms=["HS256"], audience="authenticated")
+        alg = jwt.get_unverified_header(token).get("alg")
     except jwt.PyJWTError:
         return None
+    try:
+        if alg in ("ES256", "RS256") and _jwks():
+            key = _jwks().get_signing_key_from_jwt(token).key
+            return jwt.decode(token, key, algorithms=[alg], audience="authenticated")
+        if alg == "HS256" and settings.supabase_jwt_secret:
+            return jwt.decode(token, settings.supabase_jwt_secret, algorithms=["HS256"], audience="authenticated")
+    except (jwt.PyJWTError, jwt.PyJWKClientError):
+        return None
+    return None
 
 
 def user_from_token(token: str, db: Session) -> User | None:

@@ -168,3 +168,35 @@ def test_viva_accepts_grounded_answers():
     ]
     ev = asyncio.run(mentor.evaluate_viva(CODE, "python", qs, answers))
     assert ev["passed"] and ev["llm_pass"] is None  # no LLM configured: deterministic gate only
+
+
+# ---------------- free-tier deployment paths ----------------
+
+def test_combined_run_hides_output_but_reports_both_suites():
+    code = "def add(a, b):\n    print('debug', a, b)\n    return a + b\n"
+    visible, hidden = asyncio.run(sandbox.run_suites("python", code, {}, [(TESTS[:1], True), (TESTS[1:], False)]))
+    assert visible["passed"] and hidden["passed"]
+    assert visible["total"] == 1 and hidden["total"] == 1
+    assert visible["stdout"] == "" and hidden["stdout"] == ""  # stdout could echo hidden inputs
+
+
+def test_supabase_asymmetric_jwt_is_verified(monkeypatch):
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from app import security
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    claims = {"sub": "sb-user-1", "aud": "authenticated", "email": "s@b.dev", "exp": int(time.time()) + 600}
+    token = jwt.encode(claims, priv, algorithm="ES256", headers={"kid": "k1"})
+
+    class FakeJWKS:
+        def get_signing_key_from_jwt(self, _):
+            return type("K", (), {"key": priv.public_key()})()
+
+    monkeypatch.setattr(security, "_jwks", lambda: FakeJWKS())
+    assert security.decode_supabase(token)["sub"] == "sb-user-1"
+    other = ec.generate_private_key(ec.SECP256R1())
+    assert security.decode_supabase(jwt.encode(claims, other, algorithm="ES256")) is None  # wrong key rejected
