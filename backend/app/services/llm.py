@@ -84,17 +84,30 @@ async def generate_json(prompt: str, schema: dict, system: str = "", temperature
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
     headers = {"x-goog-api-key": settings.gemini_api_key}
+
+    async def call(client: httpx.AsyncClient, model: str) -> httpx.Response:
+        payload = body
+        if model.startswith("gemini-3"):
+            # Newer models "think" by default, which can take a long time. Ask for low effort,
+            # and retry without the option if this model rejects it.
+            payload = {**body, "generationConfig": {**body["generationConfig"], "thinkingConfig": {"thinkingLevel": "low"}}}
+        resp = await client.post(f"{BASE}/{model}:generateContent", headers=headers, json=payload)
+        if resp.status_code == 400 and payload is not body:
+            resp = await client.post(f"{BASE}/{model}:generateContent", headers=headers, json=body)
+        return resp
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(f"{BASE}/{current_model()}:generateContent", headers=headers, json=body)
+        async with httpx.AsyncClient(timeout=75) as client:
+            r = await call(client, current_model())
             if r.status_code == 404:
                 found = await _discover_model(client)
                 if found and found != current_model():
                     log.warning("Gemini model %s unavailable; switching to %s", current_model(), found)
                     _active_model = found
-                    r = await client.post(f"{BASE}/{found}:generateContent", headers=headers, json=body)
+                    r = await call(client, found)
             r.raise_for_status()
-            text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            text = "".join(pt.get("text", "") for pt in parts if not pt.get("thought"))
         import json
 
         data = json.loads(text)
