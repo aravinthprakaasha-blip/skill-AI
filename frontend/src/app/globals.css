@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 224 47% 6%;
+  --panel: 223 42% 9%;
+  --panel-2: 222 38% 12%;
+  --line: 220 32% 19%;
+  --fg: 210 40% 96%;
+  --muted: 216 18% 62%;
+  --accent: 189 95% 52%;
+  --accent-2: 214 98% 62%;
+  --ok: 152 66% 48%;
+  --warn: 38 95% 58%;
+  --bad: 352 85% 62%;
+  --tier0: 216 14% 50%;
+  --tier1: 214 98% 64%;
+  --tier2: 189 95% 52%;
+  --tier3: 152 66% 50%;
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: hsl(var(--bg));
+  color: hsl(var(--fg));
+}
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 85% -10%, hsl(var(--accent-2) / 0.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 10%, hsl(var(--accent) / 0.07), transparent 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(hsl(var(--line) / 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--line) / 0.35) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, hsl(var(--accent)), hsl(var(--accent-2)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+::selection { background: hsl(var(--accent) / 0.3); }
+*:focus-visible { outline: 2px solid hsl(var(--accent)); outline-offset: 2px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--line)); border-radius: 8px; border: 2px solid hsl(var(--bg)); }
+
+.prose-brief p { margin: 0.5rem 0; }
+.prose-brief ul { list-style: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
+.prose-brief code { font-family: var(--font-mono); font-size: 0.85em; background: hsl(var(--panel-2)); border: 1px solid hsl(var(--line)); padding: 0.05rem 0.3rem; border-radius: 0.3rem; color: hsl(var(--accent)); }
+
+.react-flow__attribution { display: none; }

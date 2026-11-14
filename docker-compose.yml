@@ -1,0 +1,106 @@
+# SkillForge AI - full stack.
+#   docker compose up --build
+# Judge0 needs a Linux host with cgroup v1 (or `systemd.unified_cgroup_hierarchy=0`). See README.
+name: skillforge
+
+x-backend-env: &backend-env
+  APP_ENV: production
+  DATABASE_URL: postgresql://skillforge:${POSTGRES_PASSWORD:-skillforge}@db:5432/skillforge
+  REDIS_URL: redis://redis:6379/0
+  JUDGE0_URL: http://judge0-server:2358
+  JUDGE0_API_KEY: ${JUDGE0_AUTH_TOKEN:-change-me-judge0-token}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+  SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  # Demo accounts share a published password: enable only for demos, never for real users.
+  SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+  ALLOW_LOCAL_RUNNER: ${ALLOW_LOCAL_RUNNER:-false}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: skillforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skillforge}
+      POSTGRES_DB: skillforge
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillforge"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment: *backend-env
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: ./backend
+    command: ["rq", "worker", "skillforge", "--url", "redis://redis:6379/0"]
+    environment: *backend-env
+    depends_on:
+      backend: { condition: service_started }
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    ports: ["3000:3000"]
+    depends_on: [backend]
+
+  # ---------------- Judge0 (isolated code execution sandbox) ----------------
+  judge0-server:
+    image: judge0/judge0:1.13.1
+    privileged: true
+    environment: &judge0-env
+      REDIS_HOST: judge0-redis
+      POSTGRES_HOST: judge0-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: ${JUDGE0_DB_PASSWORD:-judge0}
+      AUTHN_TOKEN: ${JUDGE0_AUTH_TOKEN:-change-me-judge0-token}
+      ENABLE_NETWORK: "false"
+      ALLOW_ENABLE_NETWORK: "false"
+      CPU_TIME_LIMIT: "5"
+      MAX_CPU_TIME_LIMIT: "10"
+      MEMORY_LIMIT: "256000"
+      MAX_MEMORY_LIMIT: "512000"
+      MAX_PROCESSES_AND_OR_THREADS: "64"
+      MAX_FILE_SIZE: "1024"
+    depends_on: [judge0-db, judge0-redis]
+
+  judge0-workers:
+    image: judge0/judge0:1.13.1
+    command: ["./scripts/workers"]
+    privileged: true
+    environment: *judge0-env
+    depends_on: [judge0-db, judge0-redis]
+
+  judge0-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: ${JUDGE0_DB_PASSWORD:-judge0}
+    volumes: [judge0db:/var/lib/postgresql/data]
+
+  judge0-redis:
+    image: redis:7-alpine
+
+volumes:
+  pgdata:
+  judge0db:
