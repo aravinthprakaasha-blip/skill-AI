@@ -262,3 +262,29 @@ def test_gemini_candidate_order():
     order = candidate_models([{"name": f"models/{n}", "supportedGenerationMethods": gm} for n in names])
     assert order == ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-3.9-flash-preview",
                      "gemini-3.8-flash-lite", "gemini-3.5-pro"]
+
+
+def test_execute_falls_back_from_judge0_to_runner(monkeypatch):
+    import httpx
+
+    from app.services import sandbox
+
+    async def broken_judge0(*a):
+        raise httpx.HTTPStatusError("403", request=httpx.Request("POST", "https://x"), response=httpx.Response(403))
+
+    async def fake_runner(language, source, stdin):
+        return {"status": "ok", "stdout": "hi", "stderr": "", "engine": "runner"}
+
+    monkeypatch.setattr(sandbox.settings, "judge0_url", "https://judge0-ce.p.rapidapi.com")
+    monkeypatch.setattr(sandbox.settings, "runner_url", "https://runner.example")
+    monkeypatch.setattr(sandbox.settings, "allow_local_runner", False)
+    monkeypatch.setattr(sandbox, "_judge0", broken_judge0)
+    monkeypatch.setattr(sandbox, "_runner", fake_runner)
+    assert asyncio.run(sandbox.execute("python", "print(1)", ""))["engine"] == "runner"
+
+    async def broken_runner(*a):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(sandbox, "_runner", broken_runner)
+    out = asyncio.run(sandbox.execute("python", "print(1)", ""))
+    assert out["status"] == "unavailable" and "HTTP 403" in out["stderr"] and "runner" in out["stderr"]

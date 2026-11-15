@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Code execution. Judge0 is the isolated sandbox; the local runner is a dev-only fallback.
     judge0_url: str = ""
     judge0_api_key: str = ""
+    # Free alternative to Judge0: the secret-free runner service in runner/ (deploy it separately).
+    runner_url: str = ""
+    runner_token: str = ""
     # The local subprocess runner is NOT a security sandbox. Defaults to on in development only.
     allow_local_runner: bool | None = None
     exec_time_limit_s: float = 5.0

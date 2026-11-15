@@ -191,9 +191,14 @@ def build_program(language: str, code: str, calls: list[dict], lang_cfg: dict, m
 
 
 def engine_name() -> str:
+    engines = []
     if settings.judge0_url:
-        return "judge0"
-    return "local-runner" if settings.allow_local_runner else "unavailable"
+        engines.append("judge0")
+    if settings.runner_url:
+        engines.append("runner")
+    if settings.allow_local_runner:
+        engines.append("local-runner")
+    return "+".join(engines) or "unavailable"
 
 
 def _b64(s: str) -> str:
@@ -301,21 +306,42 @@ def _judge0_error(exc: Exception) -> str:
     """Actionable, secret-free description of a Judge0 failure."""
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
-        hint = {401: "invalid API key", 403: "not subscribed or key not allowed", 429: "daily quota exceeded"}.get(code, "")
+        hint = {401: "invalid API key or token", 403: "not subscribed or key not allowed", 429: "quota exceeded"}.get(code, "")
         return f"HTTP {code}{': ' + hint if hint else ''}"
     return type(exc).__name__
 
 
+async def _runner(language: str, source: str, stdin: str) -> dict:
+    """Separate secret-free runner service (see runner/). Generous timeout covers free-tier cold starts."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(f"{settings.runner_url.rstrip('/')}/run",
+                              headers={"X-Runner-Token": settings.runner_token},
+                              json={"language": language, "source": source, "stdin": stdin})
+        r.raise_for_status()
+        data = r.json()
+    data["stdout"] = (data.get("stdout") or "")[:MAX_OUTPUT]
+    data["stderr"] = (data.get("stderr") or "")[:MAX_OUTPUT]
+    return data
+
+
 async def execute(language: str, source: str, stdin: str) -> dict:
+    """Try each configured engine in order; move on only when an engine itself fails
+    (unreachable, quota, auth), never because of the learner's code."""
+    failures = []
     if settings.judge0_url:
         try:
             return await _judge0(language, source, stdin)
         except Exception as exc:
-            if not settings.allow_local_runner:
-                return {"status": "unavailable", "stdout": "", "stderr": f"Judge0 unreachable ({_judge0_error(exc)})", "engine": "judge0"}
+            failures.append(f"Judge0: {_judge0_error(exc)}")
+    if settings.runner_url:
+        try:
+            return await _runner(language, source, stdin)
+        except Exception as exc:
+            failures.append(f"runner: {_judge0_error(exc)}")
     if settings.allow_local_runner:
         return await asyncio.to_thread(_local_sync, language, source, stdin)
-    return {"status": "unavailable", "stdout": "", "stderr": "No execution engine configured", "engine": "unavailable"}
+    detail = "; ".join(failures) or "no execution engine configured"
+    return {"status": "unavailable", "stdout": "", "stderr": f"Code execution unavailable ({detail})", "engine": engine_name()}
 
 
 # ---------------- test running ----------------

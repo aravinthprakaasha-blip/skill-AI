@@ -10,7 +10,7 @@ each part gives you something that a later part needs.
 |---|---|---|---|
 | 1 | Supabase | Database + user login | 20 min |
 | 2 | Google AI Studio | AI mentor, code review, viva questions | 5 min |
-| 3 | RapidAPI (Judge0) | Safely runs learners' code | 10 min |
+| 3 | (nothing to sign up for) | Learners' code runs on a second free Render service | 0 min |
 | 4 | Render | Runs the backend (Python API) | 25 min |
 | 5 | Vercel | Runs the website | 15 min |
 | 6 | Connect them + make yourself admin | Final wiring | 15 min |
@@ -76,21 +76,17 @@ each part gives you something that a later part needs.
 
 ---
 
-## Part 3 — Judge0 on RapidAPI (safe code runner)
+## Part 3 — Code runner (nothing to do here)
 
-Learners' code must never run on your own server, so a separate sandbox runs it.
+Learners' code must never run inside the main backend (which holds your database password and API
+keys). The Render blueprint in Part 4 therefore creates a **second free service, `skillforge-runner`**,
+that only runs code. It holds no secrets, only accepts requests carrying a random token that Render
+generates and shares with the backend, and runs each submission as an unprivileged user with time,
+memory and process limits.
 
-1. Go to **https://rapidapi.com** → **Sign Up** (Google or GitHub is fine).
-2. In the search bar type **Judge0 CE** and open the API published by **Judge0**.
-3. Click **Pricing** → under the **Basic** plan (price **$0**) click **Subscribe** / **Start Free Plan**.
-   Note the daily limit shown (it is small, around 50 requests per day).
-4. Click the **Endpoints** tab. On the right side, under **Code Snippets**, find the header
-   `X-RapidAPI-Key: ...`. Copy that value. **📋 Save** as `RAPIDAPI_KEY`.
-
-> One mission **submission** uses 1 request; each **Run** button press uses 1 request. With ~50/day
-> this is enough for you and a few testers, not for a class of students.
-
-✅ **Checkpoint:** you have `RAPIDAPI_KEY`.
+> Judge0 on RapidAPI no longer has a free plan (it is pay-per-use, about $0.0017 per submission).
+> If you ever buy it, add `JUDGE0_URL` and `JUDGE0_API_KEY` to the backend on Render; it is then
+> tried first and the free runner becomes the fallback.
 
 ---
 
@@ -110,11 +106,11 @@ Learners' code must never run on your own server, so a separate sandbox runs it.
 | `DATABASE_URL` | `DATABASE_URL` |
 | `SUPABASE_URL` | `SUPABASE_URL` |
 | `GEMINI_API_KEY` | `GEMINI_API_KEY` |
-| `JUDGE0_API_KEY` | `RAPIDAPI_KEY` |
+| `RUNNER_URL` | type `https://example.com` for now — you fix it in step 4.3 |
 | `CORS_ORIGINS` | type `https://example.com` for now — you fix it in Part 6 |
 
-   (`JWT_SECRET` is generated automatically. `APP_ENV`, `JUDGE0_URL`, `ALLOW_LOCAL_RUNNER` and
-   `SEED_DEMO_DATA` are already filled in.)
+   (`JWT_SECRET` and the runner's `RUNNER_TOKEN` are generated automatically. `APP_ENV`,
+   `ALLOW_LOCAL_RUNNER` and `SEED_DEMO_DATA` are already filled in.)
 6. Click **Apply**. The first build takes **5–10 minutes**. Watch the **Logs** tab.
 7. Optional: if you saved `SUPABASE_JWT_SECRET`, open the service → **Environment** → **Add
    Environment Variable** → add it.
@@ -125,10 +121,17 @@ Learners' code must never run on your own server, so a separate sandbox runs it.
 2. Open `BACKEND_URL/api/health` in your browser, e.g.
    `https://skillforge-api.onrender.com/api/health`. You should see something like:
    ```json
-   {"status":"ok","database":"ok","llm":"gemini:gemini-2.5-flash","execution":"judge0"}
+   {"status":"ok","database":"ok","llm":"gemini:gemini-3.6-flash","execution":"runner"}
    ```
 
-✅ **Checkpoint:** `database` is `ok`, `llm` starts with `gemini`, `execution` is `judge0`.
+### 4.3 Connect the code runner
+1. In the Render dashboard open **skillforge-runner** and copy its URL (like
+   `https://skillforge-runner.onrender.com`).
+2. Open `that-URL/health`. You should see `"sandboxed_user": true` and `"token_configured": true`.
+3. Open **skillforge-api** → **Environment** → set `RUNNER_URL` to the runner URL (no `/` at the end)
+   → **Save, rebuild, and deploy**.
+
+✅ **Checkpoint:** `database` is `ok`, `llm` starts with `gemini`, `execution` includes `runner`.
 
 **If it fails:**
 - `database: unreachable` or the build fails at `alembic upgrade head` → your `DATABASE_URL` is wrong.
@@ -182,7 +185,7 @@ Learners' code must never run on your own server, so a separate sandbox runs it.
    ```
    → **Run**. It should say `1 row affected` (`Success. No rows returned` is also fine).
 4. In SkillForge click **Sign out**, then sign in again. You now land on the **Admin** page.
-5. Check **Integrations**: you want `llm: gemini…`, `execution: judge0`, `database: postgresql`,
+5. Check **Integrations**: you want `llm: gemini…`, `execution: runner`, `database: postgresql`,
    `vector search: pgvector`. (`queue: in-process` is expected on the free plan.)
 6. **Security check (important):** Supabase → **Advisors** → **Security Advisor** → **Refresh**.
    There must be **no** "RLS Disabled in Public" errors. SkillForge turns Row Level Security on for
@@ -227,7 +230,7 @@ in Render/Vercel, and delete the old one. For `JWT_SECRET`, use Render → Envir
 (this signs everyone out).
 
 **Free-plan limits to remember**
-- ~50 code executions per day (Judge0 free plan).
+- The free runner sleeps after ~15 idle minutes; the first submission afterwards takes up to a minute.
 - Supabase sends only a few confirmation emails per hour on the free plan; if testers don't get
   emails, wait or turn off **Confirm email** under Authentication → Sign In / Providers → Email
   (less secure — only for testing).
@@ -242,6 +245,6 @@ in Render/Vercel, and delete the old one. For `JWT_SECRET`, use Render → Envir
 | Sign-in works but then *Could not link your Supabase account* | `SUPABASE_URL` missing/wrong in **Render** (not only Vercel). |
 | *Check your inbox to confirm your email* | Click the email link first; check spam. |
 | Browser console shows a **CORS** error | `CORS_ORIGINS` in Render must exactly equal `WEBSITE_URL` — `https://`, no `/` at the end. |
-| Submissions say *Code execution engine unavailable* | Daily Judge0 limit reached, or `JUDGE0_API_KEY` wrong. Check usage in the RapidAPI dashboard. |
+| Submissions say *Code execution unavailable* | The runner is asleep (try again in a minute) or `RUNNER_URL` is wrong. The message names the engine that failed. |
 | Supabase dashboard says **Paused** | Click **Restore project**, then set up Part 7. |
 | Render build fails | Open **Logs**, copy the last 30 lines, and ask for help. |

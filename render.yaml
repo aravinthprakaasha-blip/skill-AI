@@ -20,10 +20,15 @@ services:
         sync: false                  # https://<project>.supabase.co
       - key: GEMINI_API_KEY
         sync: false
-      - key: JUDGE0_URL
-        value: https://judge0-ce.p.rapidapi.com
-      - key: JUDGE0_API_KEY
-        sync: false                  # your RapidAPI key
+      # Code execution: the free secret-free runner below. (Judge0 is optional: set JUDGE0_URL
+      # and JUDGE0_API_KEY yourself if you buy a Judge0 plan; it is then tried first.)
+      - key: RUNNER_URL
+        sync: false                  # the runner's public URL, e.g. https://skillforge-runner.onrender.com
+      - key: RUNNER_TOKEN
+        fromService:
+          type: web
+          name: skillforge-runner
+          envVarKey: RUNNER_TOKEN    # shared secret, generated once on the runner
       - key: CORS_ORIGINS
         sync: false                  # your Vercel URL, e.g. https://skill-ai.vercel.app
       - key: ALLOW_LOCAL_RUNNER
@@ -32,3 +37,19 @@ services:
         value: "false"
       - key: CORS_ORIGIN_REGEX
         sync: false                  # optional: ^https://skillai(-[a-z0-9-]+)?-<team>-projects\.vercel\.app$
+
+  - type: web
+    name: skillforge-runner
+    runtime: docker
+    plan: free
+    rootDir: runner
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: RUNNER_TOKEN
+        generateValue: true          # only the backend knows this; random callers get 401
+      - key: RUNNER_TIME_LIMIT_S
+        value: "5"
+      - key: RUNNER_MEMORY_MB
+        value: "256"
